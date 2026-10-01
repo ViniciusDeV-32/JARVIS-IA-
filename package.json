@@ -1,0 +1,12 @@
+{
+  "name": "jarvis-ia-server",
+  "version": "1.0.0",
+  "description": "Servidor Node.js do JARVIS IA",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
