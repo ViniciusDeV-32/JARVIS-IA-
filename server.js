@@ -1,13 +1,8 @@
 const http = require('http');
-const OpenAI = require('openai');
 
 const PORT = process.env.PORT || 3000;
-const MODEL = process.env.JARVIS_MODEL || 'gpt-5.6';
-const VOICE = process.env.JARVIS_VOICE || 'onyx';
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+const MODEL = process.env.JARVIS_MODEL || 'gemini-2.5-flash-lite';
+const ALEXA_SKILL_ID = process.env.ALEXA_SKILL_ID || '';
 
 function sendJson(res, status, data) {
   res.statusCode = status;
@@ -31,18 +26,131 @@ function readBody(req) {
 }
 
 async function askJarvis(message) {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY não configurada no Render.');
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY não configurada no Render.');
   }
 
-  const response = await openai.responses.create({
-    model: MODEL,
-    instructions:
-      'Você é JARVIS, um assistente pessoal inteligente. Responda em português do Brasil, de forma natural, objetiva e educada. Não diga que você é o ChatGPT; apresente-se como JARVIS.',
-    input: message
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+    encodeURIComponent(MODEL) + ':generateContent?key=' + encodeURIComponent(apiKey);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [{
+          text: 'Você é JARVIS, um assistente pessoal inteligente. Responda em português do Brasil, de forma natural, objetiva, educada e adequada para ser falada pela Alexa. Não diga que você é Gemini ou ChatGPT; apresente-se como JARVIS.'
+        }]
+      },
+      contents: [{
+        role: 'user',
+        parts: [{ text: message }]
+      }],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 500
+      }
+    })
   });
 
-  return response.output_text;
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error('Gemini error:', JSON.stringify(data));
+    throw new Error(data?.error?.message || 'Erro ao consultar o Gemini.');
+  }
+
+  const reply = data?.candidates?.[0]?.content?.parts
+    ?.map(part => part.text || '')
+    .join('')
+    .trim();
+
+  if (!reply) {
+    throw new Error('O Gemini não retornou uma resposta.');
+  }
+
+  return reply;
+}
+
+function alexaResponse(text, endSession = true) {
+  return {
+    version: '1.0',
+    response: {
+      outputSpeech: {
+        type: 'PlainText',
+        text: text.slice(0, 8000)
+      },
+      shouldEndSession: endSession
+    }
+  };
+}
+
+function verifyAlexaRequest(body) {
+  if (!ALEXA_SKILL_ID) return true;
+
+  return body?.session?.application?.applicationId === ALEXA_SKILL_ID;
+}
+
+async function handleAlexa(body) {
+  if (!verifyAlexaRequest(body)) {
+    const error = new Error('Alexa Skill ID inválido.');
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const request = body.request || {};
+
+  if (request.type === 'LaunchRequest') {
+    return alexaResponse(
+      'Olá. Eu sou o JARVIS. Pode me perguntar alguma coisa.',
+      false
+    );
+  }
+
+  if (request.type === 'SessionEndedRequest') {
+    return { version: '1.0', response: {} };
+  }
+
+  if (request.type === 'IntentRequest') {
+    const intentName = request.intent?.name;
+
+    if (intentName === 'AMAZON.StopIntent' ||
+        intentName === 'AMAZON.CancelIntent') {
+      return alexaResponse('Até logo.', true);
+    }
+
+    if (intentName === 'AMAZON.HelpIntent') {
+      return alexaResponse(
+        'Você pode dizer: Jarvis, qual é a capital do Brasil? Ou qualquer outra pergunta.',
+        false
+      );
+    }
+
+    if (intentName === 'JarvisIntent') {
+      const slots = request.intent?.slots || {};
+      const message =
+        slots.question?.value ||
+        slots.pergunta?.value ||
+        slots.query?.value;
+
+      if (!message) {
+        return alexaResponse(
+          'Claro. O que você gostaria de saber?',
+          false
+        );
+      }
+
+      const reply = await askJarvis(message);
+      return alexaResponse(reply, true);
+    }
+  }
+
+  return alexaResponse(
+    'Desculpe, não entendi. Pode perguntar novamente?',
+    false
+  );
 }
 
 const server = http.createServer(async (req, res) => {
@@ -52,8 +160,7 @@ const server = http.createServer(async (req, res) => {
         status: 'online',
         name: 'JARVIS IA',
         model: MODEL,
-        voice: VOICE,
-        endpoints: ['/chat', '/voice']
+        endpoints: ['/chat', '/alexa']
       });
     }
 
@@ -62,42 +169,26 @@ const server = http.createServer(async (req, res) => {
       const message = body.message;
 
       if (!message || typeof message !== 'string') {
-        return sendJson(res, 400, { error: 'Envie { "message": "..." }' });
+        return sendJson(res, 400, {
+          error: 'Envie { "message": "..." }'
+        });
       }
 
       const reply = await askJarvis(message);
       return sendJson(res, 200, { reply, model: MODEL });
     }
 
-    if (req.method === 'POST' && req.url === '/voice') {
+    if (req.method === 'POST' && req.url === '/alexa') {
       const body = JSON.parse(await readBody(req));
-      const message = body.message;
-
-      if (!message || typeof message !== 'string') {
-        return sendJson(res, 400, { error: 'Envie { "message": "..." }' });
-      }
-
-      const reply = await askJarvis(message);
-
-      const audio = await openai.audio.speech.create({
-        model: 'gpt-4o-mini-tts',
-        voice: VOICE,
-        input: reply,
-        instructions: 'Fale em português do Brasil, com voz masculina, calma, confiante e tecnológica, como um assistente pessoal futurista.',
-        response_format: 'mp3'
-      });
-
-      const buffer = Buffer.from(await audio.arrayBuffer());
-      res.statusCode = 200;
-      res.setHeader('Content-Type', 'audio/mpeg');
-      res.setHeader('Content-Length', buffer.length);
-      return res.end(buffer);
+      const response = await handleAlexa(body);
+      return sendJson(res, 200, response);
     }
 
     return sendJson(res, 404, { error: 'Rota não encontrada' });
   } catch (error) {
     console.error(error);
-    return sendJson(res, 500, {
+
+    return sendJson(res, error.statusCode || 500, {
       error: 'Erro no JARVIS',
       message: error.message
     });
@@ -105,5 +196,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`JARVIS rodando na porta ${PORT}`);
+  console.log('JARVIS rodando na porta ' + PORT);
 });
