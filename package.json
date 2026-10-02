@@ -1,10 +1,13 @@
 {
   "name": "jarvis-ia-server",
-  "version": "1.0.0",
-  "description": "Servidor Node.js do JARVIS IA",
+  "version": "1.1.0",
+  "description": "Servidor JARVIS IA com OpenAI e voz",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
+  },
+  "dependencies": {
+    "openai": "^6.0.0"
   },
   "engines": {
     "node": ">=20"
