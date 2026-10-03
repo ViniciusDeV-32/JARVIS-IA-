@@ -1,14 +1,10 @@
-```js
 const http = require('http');
 
 const PORT = process.env.PORT || 3000;
 const MODEL = process.env.JARVIS_MODEL || 'gemini-2.5-flash-lite';
 const ALEXA_SKILL_ID = process.env.ALEXA_SKILL_ID || '';
 
-// Memória das conversas da Alexa
 const conversations = new Map();
-
-// Quantidade máxima de mensagens mantidas por sessão
 const MAX_HISTORY_MESSAGES = 12;
 
 function sendJson(res, status, data) {
@@ -48,12 +44,10 @@ async function askJarvis(message, sessionId = null) {
     ':generateContent?key=' +
     encodeURIComponent(apiKey);
 
-  // Recupera o histórico da sessão
   const history = sessionId
     ? (conversations.get(sessionId) || [])
     : [];
 
-  // Adiciona a nova pergunta
   const contents = [
     ...history,
     {
@@ -81,9 +75,7 @@ async function askJarvis(message, sessionId = null) {
             'Não repita desnecessariamente informações que já foram dadas.'
         }]
       },
-
-      contents: contents,
-
+      contents,
       generationConfig: {
         temperature: 0.7,
         maxOutputTokens: 500
@@ -95,7 +87,6 @@ async function askJarvis(message, sessionId = null) {
 
   if (!response.ok) {
     console.error('Gemini error:', JSON.stringify(data));
-
     throw new Error(
       data?.error?.message ||
       'Erro ao consultar o Gemini.'
@@ -111,7 +102,6 @@ async function askJarvis(message, sessionId = null) {
     throw new Error('O Gemini não retornou uma resposta.');
   }
 
-  // Salva pergunta + resposta na memória
   if (sessionId) {
     const updatedHistory = [
       ...contents,
@@ -133,13 +123,11 @@ async function askJarvis(message, sessionId = null) {
 function alexaResponse(text, endSession = true) {
   return {
     version: '1.0',
-
     response: {
       outputSpeech: {
         type: 'PlainText',
         text: text.slice(0, 8000)
       },
-
       shouldEndSession: endSession
     }
   };
@@ -161,17 +149,9 @@ async function handleAlexa(body) {
   }
 
   const request = body.request || {};
-
-  // ID único da conversa atual
   const sessionId = body.session?.sessionId || null;
 
-  // ==============================
-  // ABRIR O JARVIS
-  // ==============================
-
   if (request.type === 'LaunchRequest') {
-
-    // Começa uma nova conversa
     if (sessionId) {
       conversations.set(sessionId, []);
     }
@@ -182,12 +162,7 @@ async function handleAlexa(body) {
     );
   }
 
-  // ==============================
-  // SESSÃO ENCERRADA
-  // ==============================
-
   if (request.type === 'SessionEndedRequest') {
-
     if (sessionId) {
       conversations.delete(sessionId);
     }
@@ -198,51 +173,28 @@ async function handleAlexa(body) {
     };
   }
 
-  // ==============================
-  // INTENTS
-  // ==============================
-
   if (request.type === 'IntentRequest') {
-
     const intentName = request.intent?.name;
-
-    // ==============================
-    // PARAR
-    // ==============================
 
     if (
       intentName === 'AMAZON.StopIntent' ||
       intentName === 'AMAZON.CancelIntent'
     ) {
-
       if (sessionId) {
         conversations.delete(sessionId);
       }
 
-      return alexaResponse(
-        'Até logo.',
-        true
-      );
+      return alexaResponse('Até logo.', true);
     }
 
-    // ==============================
-    // AJUDA
-    // ==============================
-
     if (intentName === 'AMAZON.HelpIntent') {
-
       return alexaResponse(
         'Você pode me fazer qualquer pergunta. Por exemplo: qual é a capital do Brasil?',
         false
       );
     }
 
-    // ==============================
-    // JARVIS
-    // ==============================
-
     if (intentName === 'JarvisIntent') {
-
       const slots = request.intent?.slots || {};
 
       const message =
@@ -250,27 +202,16 @@ async function handleAlexa(body) {
         slots.pergunta?.value ||
         slots.query?.value;
 
-      // Se não entendeu a pergunta
       if (!message) {
-
         return alexaResponse(
           'Claro. O que você gostaria de saber?',
           false
         );
       }
 
-      // Envia a pergunta mantendo o histórico
-      const reply = await askJarvis(
-        message,
-        sessionId
-      );
+      const reply = await askJarvis(message, sessionId);
 
-      // IMPORTANTE:
-      // false mantém a Alexa ouvindo
-      return alexaResponse(
-        reply,
-        false
-      );
+      return alexaResponse(reply, false);
     }
   }
 
@@ -280,52 +221,53 @@ async function handleAlexa(body) {
   );
 }
 
-// ==============================
-// SERVIDOR
-// ==============================
-
 const server = http.createServer(async (req, res) => {
-
   try {
-
-    // ==============================
-    // STATUS
-    // ==============================
-
-    if (
-      req.method === 'GET' &&
-      req.url === '/'
-    ) {
-
+    if (req.method === 'GET' && req.url === '/') {
       return sendJson(res, 200, {
         status: 'online',
         name: 'JARVIS IA',
         model: MODEL,
-        endpoints: [
-          '/chat',
-          '/alexa'
-        ]
+        endpoints: ['/chat', '/alexa']
       });
     }
 
-    // ==============================
-    // CHAT
-    // ==============================
-
-    if (
-      req.method === 'POST' &&
-      req.url === '/chat'
-    ) {
-
-      const body = JSON.parse(
-        await readBody(req)
-      );
-
+    if (req.method === 'POST' && req.url === '/chat') {
+      const body = JSON.parse(await readBody(req));
       const message = body.message;
 
-      if (
-        !message ||
-        typeof message !== 'string'
-      ) {
+      if (!message || typeof message !== 'string') {
+        return sendJson(res, 400, {
+          error: 'Envie { "message": "..." }'
+        });
+      }
 
-        return sendJson(res
+      const reply = await askJarvis(message);
+      return sendJson(res, 200, {
+        reply,
+        model: MODEL
+      });
+    }
+
+    if (req.method === 'POST' && req.url === '/alexa') {
+      const body = JSON.parse(await readBody(req));
+      const response = await handleAlexa(body);
+      return sendJson(res, 200, response);
+    }
+
+    return sendJson(res, 404, {
+      error: 'Rota não encontrada'
+    });
+  } catch (error) {
+    console.error(error);
+
+    return sendJson(res, error.statusCode || 500, {
+      error: 'Erro no JARVIS',
+      message: error.message
+    });
+  }
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log('JARVIS rodando na porta ' + PORT);
+});
