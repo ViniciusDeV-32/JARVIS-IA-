@@ -1,7 +1,12 @@
 const http = require('http');
 
 const PORT = process.env.PORT || 3000;
-const MODEL = process.env.JARVIS_MODEL || 'gemini-2.5-flash-lite';
+
+const configuredModel = process.env.JARVIS_MODEL || 'gemini-2.5-flash-lite';
+const MODEL = configuredModel.startsWith('gemini-')
+  ? configuredModel
+  : 'gemini-2.5-flash-lite';
+
 const ALEXA_SKILL_ID = process.env.ALEXA_SKILL_ID || '';
 
 const conversations = new Map();
