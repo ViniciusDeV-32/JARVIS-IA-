@@ -1,0 +1,9 @@
+{
+  "name": "JARVIS PLAY",
+  "short_name": "JARVIS PLAY",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f5c52e",
+  "theme_color": "#f5c52e",
+  "orientation": "portrait"
+}
